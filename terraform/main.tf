@@ -1,87 +1,93 @@
-# =============================================================================
-# MAIN INFRASTRUCTURE RESOURCES
-# =============================================================================
+# ===================================================
+# 1. TERRAFORM & PROVIDER CONFIGURATION
+# ===================================================
+terraform {
+  required_version = ">= 1.3.0"
 
-# =============================================================================
-# VPC CONFIGURATION
-# =============================================================================
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
 
+provider "aws" {
+  region = "us-west-2" # Updated to Oregon
+}
+
+
+# ===================================================
+# 2. VPC (NETWORKING)
+# ===================================================
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "~> 5.0"
 
-  name = "${var.cluster_name}-vpc"
-  cidr = var.vpc_cidr
+  name = "eks-vpc"
+  cidr = "10.0.0.0/16"
 
-  azs             = local.azs
-  public_subnets  = local.public_subnets
-  private_subnets = local.private_subnets
+  # Availability Zones for us-west-2
+  azs             = ["us-west-2a", "us-west-2b", "us-west-2c"]
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
 
-  # NAT Gateway configuration
-  enable_nat_gateway = true
-  single_nat_gateway = var.enable_single_nat_gateway
-
-  # Internet Gateway
-  create_igw = true
-
-  # DNS configuration
+  enable_nat_gateway   = true
+  single_nat_gateway   = true
   enable_dns_hostnames = true
   enable_dns_support   = true
 
-  # Manage default resources for better control
-  manage_default_network_acl    = true
-  default_network_acl_tags      = { Name = "${var.cluster_name}-default-nacl" }
-  manage_default_route_table    = true
-  default_route_table_tags      = { Name = "${var.cluster_name}-default-rt" }
-  manage_default_security_group = true
-  default_security_group_tags   = { Name = "${var.cluster_name}-default-sg" }
-
-  # Apply Kubernetes-specific tags to subnets
-  public_subnet_tags  = merge(local.common_tags, local.public_subnet_tags)
-  private_subnet_tags = merge(local.common_tags, local.private_subnet_tags)
-
-  tags = local.common_tags
-}
-
-# =============================================================================
-# EKS CLUSTER CONFIGURATION
-# =============================================================================
-
-module "retail_app_eks" {
-  source  = "terraform-aws-modules/eks/aws"
-  version = "~> 20.31"
-
-  # Basic cluster configuration
-  cluster_name    = local.cluster_name
-  cluster_version = var.kubernetes_version
-
-  # Cluster access configuration
-  cluster_endpoint_public_access           = true
-  cluster_endpoint_private_access          = true
-  enable_cluster_creator_admin_permissions = true
-
-  # EKS Auto Mode configuration - simplified node management
-  cluster_compute_config = {
-    enabled    = true
-    node_pools = ["general-purpose"]
+  public_subnet_tags = {
+    "kubernetes.io/role/elb" = 1
   }
 
-  # Network configuration
+  private_subnet_tags = {
+    "kubernetes.io/role/internal-elb" = 1
+  }
+}
+
+
+# ===================================================
+# 3. EKS (KUBERNETES CLUSTER & NODES)
+# ===================================================
+module "eks" {
+  source  = "terraform-aws-modules/eks/aws"
+  version = "~> 20.0"
+
+  cluster_name    = "my-eks-cluster"
+  cluster_version = "1.35"
+
+  cluster_endpoint_public_access = true
+
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
 
-  # KMS configuration to avoid conflicts
-  create_kms_key = true
-  kms_key_description = "EKS cluster ${local.cluster_name} encryption key"
-  kms_key_deletion_window_in_days = 7
-  
-  # Cluster logging (optional - can be expensive)
-  cluster_enabled_log_types = []
+  enable_cluster_creator_admin_permissions = true
 
-  tags = local.common_tags
+  eks_managed_node_groups = {
+    general = {
+      desired_size = 2
+      min_size     = 1
+      max_size     = 3
+
+      instance_types = ["t3.small"] # Updated to t3.small
+      capacity_type  = "ON_DEMAND"
+    }
+  }
+
+  depends_on = [module.vpc]
 }
 
 
+# ===================================================
+# 4. OUTPUTS
+# ===================================================
+output "configure_kubectl" {
+  description = "Run this command to connect your local machine to the cluster"
+  value       = "aws eks update-kubeconfig --region us-west-2 --name ${module.eks.cluster_name}"
+}
 
-
-
+output "cluster_endpoint" {
+  description = "EKS API Server Endpoint"
+  value       = module.eks.cluster_endpoint
+}

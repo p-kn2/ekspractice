@@ -14,6 +14,6 @@ spec:
     spec:
       containers:
       - name: demo-container
-        image: 276971052169.dkr.ecr.us-east-1.amazonaws.com/demo-app:latest
+        image: 276971052169.dkr.ecr.us-west-2.amazonaws.com/demo-app:latest
         ports:
         - containerPort: 5000
